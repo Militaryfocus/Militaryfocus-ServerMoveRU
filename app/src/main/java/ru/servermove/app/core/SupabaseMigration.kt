@@ -52,10 +52,10 @@ class SupabaseMigration(
             }
         }
 
-        val bytes = sourceCheck.value("BYTES=")?.toLongOrNull()
+        val bytes = sourceCheck.stdout.value("BYTES=")?.toLongOrNull()
             ?: error("Не удалось определить объём Supabase snapshot")
-        val image = sourceCheck.value("IMAGE=") ?: "unknown"
-        val version = sourceCheck.value("VERSION=") ?: "unknown"
+        val image = sourceCheck.stdout.value("IMAGE=") ?: "unknown"
+        val version = sourceCheck.stdout.value("VERSION=") ?: "unknown"
         onLog("Supabase обнаружен: $image; версия конфигурации: $version.")
         onLog("Source stack остановлен; snapshot ≈ ${humanBytes(bytes)}.")
 
