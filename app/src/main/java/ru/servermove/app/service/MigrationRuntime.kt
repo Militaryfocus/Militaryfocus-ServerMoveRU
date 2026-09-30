@@ -31,7 +31,9 @@ object MigrationRuntime {
     fun takePending(): MigrationRequest? = pending.also { pending = null }
 
     fun phase(value: MigrationPhase) {
-        val resetTransfer = value == MigrationPhase.FILES || value == MigrationPhase.DATABASE
+        val resetTransfer = value == MigrationPhase.FILES ||
+            value == MigrationPhase.DATABASE ||
+            value == MigrationPhase.SUPABASE
         if (resetTransfer) transferStartedNanos = System.nanoTime()
         _status.value = _status.value.copy(
             phase = value,
