@@ -39,10 +39,12 @@
 - source stack **должен быть заранее остановлен вручную**; приложение само его не останавливает и не удаляет;
 - target Supabase root должен отсутствовать или быть пустым;
 - на target не должно быть существующих контейнеров `supabase-*`;
-- требуются `docker compose`, GNU `tar`, `sha256sum` и passwordless `sudo -n` для migration-пользователя;
+- архитектура CPU source и target (`uname -m`) должна совпадать, потому что переносится физический PostgreSQL data directory;
+- требуются `docker compose`, GNU `tar` с поддержкой `--xattrs`/`--acls`, `sha256sum` и passwordless `sudo -n` для migration-пользователя;
 - принимается только локальный `STORAGE_BACKEND=file`; внешний S3/object storage пока блокируется;
 - до копирования проверяется свободное место;
 - после копирования можно выполнить агрегированный SHA-256 всех обычных файлов snapshot;
+- если включён автозапуск target, preflight заранее проверяет поддержку `docker compose up --wait`;
 - опционально после успешной checksum-проверки target запускается через `docker compose up -d --wait`;
 - DNS/Nginx/HAProxy cutover автоматически не выполняется.
 
