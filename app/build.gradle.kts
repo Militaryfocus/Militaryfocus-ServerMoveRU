@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "ru.servermove.app"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "ru.servermove.app"
@@ -26,7 +26,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
 
     packaging {
         resources.excludes += setOf(

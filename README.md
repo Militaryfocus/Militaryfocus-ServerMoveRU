@@ -71,7 +71,7 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 - Android Gradle Plugin 9.4.0
 - Gradle 9.6.0
 - JDK 17+
-- `compileSdk = 37`
+- `compileSdk = 36`
 - `targetSdk = 36`
 - `minSdk = 26`
 - Jetpack Compose
