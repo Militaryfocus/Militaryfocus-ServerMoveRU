@@ -22,12 +22,20 @@ data class DatabaseSpec(
     val createTarget: Boolean = false,
 )
 
+data class SupabaseSpec(
+    val enabled: Boolean = false,
+    val sourceRoot: String = "",
+    val targetRoot: String = "",
+    val startTargetAfterCopy: Boolean = false,
+)
+
 data class MigrationPlan(
     val sourcePath: String,
     val targetPath: String,
     val migrateFiles: Boolean = true,
     val database: DatabaseSpec = DatabaseSpec(),
     val verifyChecksums: Boolean = true,
+    val supabase: SupabaseSpec = SupabaseSpec(),
 )
 
 data class MigrationRequest(
@@ -42,6 +50,7 @@ enum class MigrationPhase(val title: String) {
     PREFLIGHT("Предварительная проверка"),
     FILES("Перенос файлов"),
     DATABASE("Перенос базы данных"),
+    SUPABASE("Перенос Supabase"),
     VERIFY("Проверка результата"),
     COMPLETED("Миграция завершена"),
     CANCELLED("Отменено"),
