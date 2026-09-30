@@ -26,7 +26,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -58,6 +57,7 @@ import ru.servermove.app.model.MigrationPlan
 import ru.servermove.app.model.MigrationRequest
 import ru.servermove.app.model.MigrationStatus
 import ru.servermove.app.model.ServerEndpoint
+import ru.servermove.app.model.SupabaseSpec
 
 @Composable
 fun ServerMoveApp(vm: MigrationViewModel = viewModel()) {
@@ -93,6 +93,11 @@ private fun MigrationScreen(vm: MigrationViewModel) {
     var createDb by remember { mutableStateOf(false) }
     var verify by remember { mutableStateOf(true) }
 
+    var supabaseEnabled by remember { mutableStateOf(false) }
+    var supabaseSourceRoot by remember { mutableStateOf("/opt/supabase") }
+    var supabaseTargetRoot by remember { mutableStateOf("/opt/supabase") }
+    var startSupabaseTarget by remember { mutableStateOf(false) }
+
     fun source() = ServerEndpoint("Источник", srcHost, srcPort.toIntOrNull() ?: 0, srcUser, srcPass, srcFp)
     fun target() = ServerEndpoint("Назначение", dstHost, dstPort.toIntOrNull() ?: 0, dstUser, dstPass, dstFp)
     fun request() = MigrationRequest(
@@ -104,6 +109,12 @@ private fun MigrationScreen(vm: MigrationViewModel) {
             migrateFiles = migrateFiles,
             database = DatabaseSpec(engine, sourceDb, targetDb.ifBlank { sourceDb }, createDb),
             verifyChecksums = verify,
+            supabase = SupabaseSpec(
+                enabled = supabaseEnabled,
+                sourceRoot = supabaseSourceRoot,
+                targetRoot = supabaseTargetRoot,
+                startTargetAfterCopy = startSupabaseTarget,
+            ),
         ),
     )
 
@@ -118,7 +129,7 @@ private fun MigrationScreen(vm: MigrationViewModel) {
         ) {
             Text("ServerMove RU", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                "Миграция сайтов и баз между Linux-серверами по SSH. Источник не удаляется.",
+                "Миграция сайтов, баз и self-hosted Supabase между Linux-серверами по SSH. Источник не удаляется.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
@@ -156,56 +167,110 @@ private fun MigrationScreen(vm: MigrationViewModel) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("3. Что переносим", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = migrateFiles, onCheckedChange = { migrateFiles = it }, enabled = !status.running)
-                        Text("Файлы сайта / каталога")
+                        Checkbox(
+                            checked = supabaseEnabled,
+                            onCheckedChange = { enabled ->
+                                supabaseEnabled = enabled
+                                if (enabled) {
+                                    migrateFiles = false
+                                    engine = DatabaseEngine.NONE
+                                }
+                            },
+                            enabled = !status.running,
+                        )
+                        Text("Полный self-hosted Supabase (cold snapshot)")
                     }
-                    OutlinedTextField(
-                        value = sourcePath,
-                        onValueChange = { sourcePath = it },
-                        label = { Text("Путь на источнике") },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = migrateFiles && !status.running,
-                    )
-                    OutlinedTextField(
-                        value = targetPath,
-                        onValueChange = { targetPath = it },
-                        label = { Text("Путь на назначении") },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = migrateFiles && !status.running,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DatabaseEngine.entries.forEach { item ->
-                            FilterChip(
-                                selected = engine == item,
-                                onClick = { engine = item },
-                                label = { Text(item.title) },
-                                enabled = !status.running,
-                            )
-                        }
-                    }
-                    if (engine != DatabaseEngine.NONE) {
+
+                    if (supabaseEnabled) {
+                        Text(
+                            "Source stack должен быть заранее остановлен вручную. Приложение не останавливает и не удаляет источник. Поддерживается локальный file Storage; внешний S3 пока блокируется.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         OutlinedTextField(
-                            value = sourceDb,
-                            onValueChange = { sourceDb = it },
-                            label = { Text("Имя исходной БД") },
+                            value = supabaseSourceRoot,
+                            onValueChange = { supabaseSourceRoot = it },
+                            label = { Text("Корень Supabase на источнике") },
+                            supportingText = { Text("Каталог с docker-compose.yml, .env и volumes/") },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !status.running,
                         )
                         OutlinedTextField(
-                            value = targetDb,
-                            onValueChange = { targetDb = it },
-                            label = { Text("Имя целевой БД (пусто = такое же)") },
+                            value = supabaseTargetRoot,
+                            onValueChange = { supabaseTargetRoot = it },
+                            label = { Text("Корень Supabase на назначении") },
+                            supportingText = { Text("Каталог должен отсутствовать или быть пустым") },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !status.running,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = createDb, onCheckedChange = { createDb = it }, enabled = !status.running)
-                            Text("Создать целевую БД, если её нет")
+                            Checkbox(
+                                checked = startSupabaseTarget,
+                                onCheckedChange = { startSupabaseTarget = it },
+                                enabled = !status.running,
+                            )
+                            Text("После checksum запустить target через docker compose up --wait")
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = migrateFiles, onCheckedChange = { migrateFiles = it }, enabled = !status.running)
+                            Text("Файлы сайта / каталога")
+                        }
+                        OutlinedTextField(
+                            value = sourcePath,
+                            onValueChange = { sourcePath = it },
+                            label = { Text("Путь на источнике") },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = migrateFiles && !status.running,
+                        )
+                        OutlinedTextField(
+                            value = targetPath,
+                            onValueChange = { targetPath = it },
+                            label = { Text("Путь на назначении") },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = migrateFiles && !status.running,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DatabaseEngine.entries.forEach { item ->
+                                FilterChip(
+                                    selected = engine == item,
+                                    onClick = { engine = item },
+                                    label = { Text(item.title) },
+                                    enabled = !status.running,
+                                )
+                            }
+                        }
+                        if (engine != DatabaseEngine.NONE) {
+                            OutlinedTextField(
+                                value = sourceDb,
+                                onValueChange = { sourceDb = it },
+                                label = { Text("Имя исходной БД") },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !status.running,
+                            )
+                            OutlinedTextField(
+                                value = targetDb,
+                                onValueChange = { targetDb = it },
+                                label = { Text("Имя целевой БД (пусто = такое же)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !status.running,
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = createDb, onCheckedChange = { createDb = it }, enabled = !status.running)
+                                Text("Создать целевую БД, если её нет")
+                            }
                         }
                     }
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = verify, onCheckedChange = { verify = it }, enabled = !status.running)
-                        Text("После файлов сверить агрегированный SHA-256")
+                        Text(
+                            if (supabaseEnabled) {
+                                "После переноса сверить SHA-256 обычных файлов Supabase snapshot"
+                            } else {
+                                "После файлов сверить агрегированный SHA-256"
+                            },
+                        )
                     }
                 }
             }
