@@ -7,6 +7,7 @@ import ru.servermove.app.model.DatabaseSpec
 import ru.servermove.app.model.MigrationPlan
 import ru.servermove.app.model.MigrationRequest
 import ru.servermove.app.model.ServerEndpoint
+import ru.servermove.app.model.SupabaseSpec
 
 class MigrationValidationTest {
     private val validFingerprint = "SHA256:" + "A".repeat(43)
@@ -25,6 +26,21 @@ class MigrationValidationTest {
         target: ServerEndpoint = endpoint("Назначение", "target.example"),
         plan: MigrationPlan = MigrationPlan("/var/www/site", "/var/www/site"),
     ) = MigrationRequest(source, target, plan)
+
+    private fun supabasePlan(
+        sourceRoot: String = "/opt/supabase",
+        targetRoot: String = "/opt/supabase",
+    ) = MigrationPlan(
+        sourcePath = "/unused",
+        targetPath = "/unused",
+        migrateFiles = false,
+        database = DatabaseSpec(DatabaseEngine.NONE),
+        supabase = SupabaseSpec(
+            enabled = true,
+            sourceRoot = sourceRoot,
+            targetRoot = targetRoot,
+        ),
+    )
 
     @Test
     fun invalidPortIsRejectedBeforeServiceStarts() {
@@ -61,6 +77,37 @@ class MigrationValidationTest {
         )
         assertThrows(IllegalArgumentException::class.java) {
             MigrationEngine().validateRequest(request(plan = plan))
+        }
+    }
+
+    @Test
+    fun validSupabasePlanIsAccepted() {
+        MigrationEngine().validateRequest(request(plan = supabasePlan()))
+    }
+
+    @Test
+    fun supabaseModeRejectsMixedGenericTransfer() {
+        val plan = supabasePlan().copy(migrateFiles = true)
+        assertThrows(IllegalArgumentException::class.java) {
+            MigrationEngine().validateRequest(request(plan = plan))
+        }
+    }
+
+    @Test
+    fun supabaseRootCannotBeFilesystemRoot() {
+        assertThrows(IllegalArgumentException::class.java) {
+            MigrationEngine().validateRequest(request(plan = supabasePlan(sourceRoot = "/")))
+        }
+    }
+
+    @Test
+    fun supabaseSelfCopyIsRejected() {
+        val source = endpoint("Источник", "same.example")
+        val target = endpoint("Назначение", "same.example")
+        assertThrows(IllegalArgumentException::class.java) {
+            MigrationEngine().validateRequest(
+                request(source = source, target = target, plan = supabasePlan()),
+            )
         }
     }
 }
