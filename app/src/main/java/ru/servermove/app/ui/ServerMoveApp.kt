@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -54,9 +53,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.servermove.app.model.DatabaseEngine
 import ru.servermove.app.model.DatabaseSpec
+import ru.servermove.app.model.MigrationPhase
 import ru.servermove.app.model.MigrationPlan
 import ru.servermove.app.model.MigrationRequest
-import ru.servermove.app.model.MigrationPhase
 import ru.servermove.app.model.MigrationStatus
 import ru.servermove.app.model.ServerEndpoint
 
