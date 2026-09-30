@@ -5,11 +5,14 @@ import kotlinx.coroutines.CancellationException
 import ru.servermove.app.model.DatabaseEngine
 import ru.servermove.app.model.MigrationPhase
 import ru.servermove.app.model.MigrationRequest
+import ru.servermove.app.model.ServerEndpoint
 
 class MigrationEngine(
     private val ssh: SshClient = SshClient(),
     private val bridge: StreamBridge = StreamBridge(),
 ) {
+    private val supabase = SupabaseMigration(ssh, bridge)
+
     suspend fun run(
         request: MigrationRequest,
         onPhase: (MigrationPhase) -> Unit,
@@ -30,21 +33,44 @@ class MigrationEngine(
             onLog("Назначение: SSH-хост подтверждён по SHA-256 fingerprint.")
 
             onPhase(MigrationPhase.PREFLIGHT)
-            val expectedBytes = preflight(source, target, request, onLog)
-
-            if (request.plan.migrateFiles) {
-                onPhase(MigrationPhase.FILES)
-                transferFiles(source, target, request, expectedBytes, onLog, onProgress)
+            val expectedBytes = if (request.plan.supabase.enabled) {
+                supabase.preflight(source, target, request.plan.supabase, onLog)
+            } else {
+                preflight(source, target, request, onLog)
             }
 
-            if (request.plan.database.engine != DatabaseEngine.NONE) {
-                onPhase(MigrationPhase.DATABASE)
-                transferDatabase(source, target, request, onLog, onProgress)
-            }
+            if (request.plan.supabase.enabled) {
+                onPhase(MigrationPhase.SUPABASE)
+                supabase.transfer(
+                    source = source,
+                    target = target,
+                    spec = request.plan.supabase,
+                    expectedBytes = requireNotNull(expectedBytes),
+                    onLog = onLog,
+                    onProgress = onProgress,
+                )
+                if (request.plan.verifyChecksums) {
+                    onPhase(MigrationPhase.VERIFY)
+                    supabase.verify(source, target, request.plan.supabase, onLog)
+                }
+                if (request.plan.supabase.startTargetAfterCopy) {
+                    supabase.startTarget(target, request.plan.supabase, onLog)
+                }
+            } else {
+                if (request.plan.migrateFiles) {
+                    onPhase(MigrationPhase.FILES)
+                    transferFiles(source, target, request, expectedBytes, onLog, onProgress)
+                }
 
-            if (request.plan.verifyChecksums && request.plan.migrateFiles) {
-                onPhase(MigrationPhase.VERIFY)
-                verifyFiles(source, target, request, onLog)
+                if (request.plan.database.engine != DatabaseEngine.NONE) {
+                    onPhase(MigrationPhase.DATABASE)
+                    transferDatabase(source, target, request, onLog, onProgress)
+                }
+
+                if (request.plan.verifyChecksums && request.plan.migrateFiles) {
+                    onPhase(MigrationPhase.VERIFY)
+                    verifyFiles(source, target, request, onLog)
+                }
             }
 
             onPhase(MigrationPhase.COMPLETED)
@@ -59,7 +85,7 @@ class MigrationEngine(
         }
     }
 
-    suspend fun testConnection(endpoint: ru.servermove.app.model.ServerEndpoint): String {
+    suspend fun testConnection(endpoint: ServerEndpoint): String {
         val session = ssh.connect(endpoint)
         return try {
             val result = ssh.exec(session, "printf 'ok'; uname -sr")
@@ -74,29 +100,43 @@ class MigrationEngine(
         validateEndpoint(request.source)
         validateEndpoint(request.target)
         val plan = request.plan
-        if (plan.migrateFiles) {
-            Shell.requireAbsolutePath(plan.sourcePath, "Путь источника")
-            Shell.requireAbsolutePath(plan.targetPath, "Путь назначения")
-            require(plan.sourcePath != "/") { "Перенос корня / целиком запрещён в этой версии" }
-            require(plan.targetPath != "/") { "Запись прямо в корень / запрещена" }
-            val sameEndpoint = request.source.host.equals(request.target.host, ignoreCase = true) &&
-                request.source.port == request.target.port &&
-                request.source.username == request.target.username
-            require(!(sameEndpoint && plan.sourcePath == plan.targetPath)) {
-                "Источник и назначение указывают на один и тот же каталог"
+        val sameEndpoint = request.source.host.equals(request.target.host, ignoreCase = true) &&
+            request.source.port == request.target.port &&
+            request.source.username == request.target.username
+
+        if (plan.supabase.enabled) {
+            require(!plan.migrateFiles && plan.database.engine == DatabaseEngine.NONE) {
+                "Supabase cold migration — отдельный режим. Отключите обычный перенос файлов и базы."
+            }
+            val sourceRoot = Shell.requireAbsolutePath(plan.supabase.sourceRoot, "Корень Supabase на источнике")
+            val targetRoot = Shell.requireAbsolutePath(plan.supabase.targetRoot, "Корень Supabase на назначении")
+            require(sourceRoot != "/") { "Перенос корня / как Supabase запрещён" }
+            require(targetRoot != "/") { "Запись Supabase прямо в корень / запрещена" }
+            require(!(sameEndpoint && sourceRoot == targetRoot)) {
+                "Источник и назначение Supabase указывают на один и тот же каталог"
+            }
+        } else {
+            if (plan.migrateFiles) {
+                Shell.requireAbsolutePath(plan.sourcePath, "Путь источника")
+                Shell.requireAbsolutePath(plan.targetPath, "Путь назначения")
+                require(plan.sourcePath != "/") { "Перенос корня / целиком запрещён в этой версии" }
+                require(plan.targetPath != "/") { "Запись прямо в корень / запрещена" }
+                require(!(sameEndpoint && plan.sourcePath == plan.targetPath)) {
+                    "Источник и назначение указывают на один и тот же каталог"
+                }
+            }
+            if (plan.database.engine != DatabaseEngine.NONE) {
+                Shell.requireDatabaseName(plan.database.sourceName, "Исходная база")
+                Shell.requireDatabaseName(plan.database.targetName, "Целевая база")
             }
         }
-        if (plan.database.engine != DatabaseEngine.NONE) {
-            Shell.requireDatabaseName(plan.database.sourceName, "Исходная база")
-            Shell.requireDatabaseName(plan.database.targetName, "Целевая база")
-        }
-        require(plan.migrateFiles || plan.database.engine != DatabaseEngine.NONE) {
-            "Выберите перенос файлов, базы данных или обоих компонентов"
+
+        require(plan.supabase.enabled || plan.migrateFiles || plan.database.engine != DatabaseEngine.NONE) {
+            "Выберите перенос файлов, базы данных или Supabase"
         }
     }
 
-
-    private fun validateEndpoint(endpoint: ru.servermove.app.model.ServerEndpoint) {
+    private fun validateEndpoint(endpoint: ServerEndpoint) {
         require(endpoint.host.isNotBlank()) { "Не указан адрес сервера ${endpoint.title}" }
         require(endpoint.port in 1..65535) { "Некорректный SSH-порт ${endpoint.title}" }
         require(endpoint.username.isNotBlank()) { "Не указан SSH-пользователь ${endpoint.title}" }
