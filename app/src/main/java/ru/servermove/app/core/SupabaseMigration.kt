@@ -22,6 +22,7 @@ class SupabaseMigration(
             source,
             "set -eu; " +
                 "command -v docker >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; " +
+                "tar --help | grep -q -- '--xattrs'; tar --help | grep -q -- '--acls'; " +
                 "sudo -n true; " +
                 "test -f ${Shell.quote("$sourceRoot/docker-compose.yml")}; " +
                 "test -f ${Shell.quote("$sourceRoot/.env")}; " +
@@ -37,7 +38,8 @@ class SupabaseMigration(
                 "sudo -n docker compose config | grep -Eq 'STORAGE_BACKEND:[[:space:]]+file' || { echo 'EXTERNAL_STORAGE' >&2; exit 45; }; " +
                 "bytes=\$(sudo -n du -sb -- $sourceRootQ | awk '{print \$1}'); " +
                 "version=\$(test -f .supabase-version && cat .supabase-version || printf 'unknown'); " +
-                "printf 'IMAGE=%s\\nVERSION=%s\\nBYTES=%s\\n' \"\$image\" \"\$version\" \"\$bytes\"",
+                "arch=\$(uname -m); " +
+                "printf 'IMAGE=%s\\nVERSION=%s\\nBYTES=%s\\nARCH=%s\\n' \"\$image\" \"\$version\" \"\$bytes\" \"\$arch\"",
             timeoutMs = PREFLIGHT_TIMEOUT_MS,
         )
         require(sourceCheck.exitCode == 0) {
@@ -56,14 +58,23 @@ class SupabaseMigration(
             ?: error("Не удалось определить объём Supabase snapshot")
         val image = sourceCheck.stdout.value("IMAGE=") ?: "unknown"
         val version = sourceCheck.stdout.value("VERSION=") ?: "unknown"
+        val sourceArch = sourceCheck.stdout.value("ARCH=")
+            ?: error("Не удалось определить архитектуру source")
         onLog("Supabase обнаружен: $image; версия конфигурации: $version.")
-        onLog("Source stack остановлен; snapshot ≈ ${humanBytes(bytes)}.")
+        onLog("Source stack остановлен; архитектура $sourceArch; snapshot ≈ ${humanBytes(bytes)}.")
 
+        val waitCapabilityCheck = if (spec.startTargetAfterCopy) {
+            "sudo -n docker compose up --help | grep -q -- '--wait'; "
+        } else {
+            ""
+        }
         val targetCheck = ssh.exec(
             target,
             "set -eu; " +
                 "command -v docker >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; " +
+                "tar --help | grep -q -- '--xattrs'; tar --help | grep -q -- '--acls'; " +
                 "sudo -n true; sudo -n docker compose version >/dev/null; " +
+                waitCapabilityCheck +
                 "existing=\$(sudo -n docker ps -a --format '{{.Names}}' | grep -E '^supabase-' | head -n1 || true); " +
                 "test -z \"\$existing\" || { echo 'TARGET_SUPABASE_EXISTS' >&2; exit 46; }; " +
                 "p=\$(dirname -- $targetRootQ); sudo -n test -d \"\$p\"; " +
@@ -71,7 +82,8 @@ class SupabaseMigration(
                 "sudo -n test -d $targetRootQ; " +
                 "test -z \"\$(sudo -n find $targetRootQ -mindepth 1 -maxdepth 1 -print -quit)\" || { echo 'TARGET_NOT_EMPTY' >&2; exit 42; }; " +
                 "fi; " +
-                "sudo -n df -Pk \"\$p\" | tail -1 | awk '{print \$4}'",
+                "free=\$(sudo -n df -Pk \"\$p\" | tail -1 | awk '{print \$4}'); " +
+                "arch=\$(uname -m); printf 'FREE_KB=%s\\nARCH=%s\\n' \"\$free\" \"\$arch\"",
             timeoutMs = PREFLIGHT_TIMEOUT_MS,
         )
         require(targetCheck.exitCode == 0) {
@@ -83,12 +95,17 @@ class SupabaseMigration(
                 else -> "Supabase target preflight не пройден: ${targetCheck.stderr.ifBlank { targetCheck.stdout }}"
             }
         }
-        val freeKb = targetCheck.stdout.lineSequence().lastOrNull()?.trim()?.toLongOrNull()
+        val freeKb = targetCheck.stdout.value("FREE_KB=")?.toLongOrNull()
             ?: error("Не удалось определить свободное место на target")
+        val targetArch = targetCheck.stdout.value("ARCH=")
+            ?: error("Не удалось определить архитектуру target")
+        require(sourceArch == targetArch) {
+            "Архитектуры source ($sourceArch) и target ($targetArch) различаются. Физический PostgreSQL data directory переносить нельзя."
+        }
         require(freeKb * 1024L > bytes) {
             "На target недостаточно места для Supabase snapshot (${humanBytes(bytes)})."
         }
-        onLog("Target чистый, Docker Compose доступен, свободное место проверено.")
+        onLog("Target чистый; архитектура $targetArch совпадает; Docker Compose и GNU tar проверены; свободное место достаточно.")
         return bytes
     }
 
