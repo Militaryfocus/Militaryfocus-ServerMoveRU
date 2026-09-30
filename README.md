@@ -1,6 +1,6 @@
 # ServerMove RU
 
-Нативное Android-приложение на Kotlin/Jetpack Compose для контролируемой миграции сайтов и баз данных между Linux-серверами по SSH. Телефон выступает защищённым управляющим клиентом и потоковым мостом: гигабайтные архивы не сохраняются в память устройства.
+Нативное Android-приложение на Kotlin/Jetpack Compose для контролируемой миграции сайтов, баз данных и self-hosted Supabase между Linux-серверами по SSH. Телефон выступает защищённым управляющим клиентом и потоковым мостом: гигабайтные архивы не сохраняются в память устройства.
 
 ## Реализовано в 0.1.0
 
@@ -21,6 +21,32 @@
 - Русский интерфейс и журнал этапов с временными метками.
 - Unit-тесты ранней валидации и Shell escaping.
 - GitHub Actions: unit tests + Android Lint + сборка debug APK + публикация APK как workflow artifact.
+
+## Supabase: контур 0.2.0
+
+В ветке 0.2 добавлен отдельный режим **self-hosted Supabase → self-hosted Supabase (cold snapshot)**. Он не смешивается с обычным переносом файлов/PostgreSQL/MySQL.
+
+Переносятся целиком данные официального Docker-развёртывания из указанного Supabase root:
+
+- `docker-compose*.yml`, `.env`, `.supabase-version` и прочая конфигурация;
+- физический PostgreSQL data directory `volumes/db/data` вместе со служебными файлами Supabase;
+- локальный Storage `volumes/storage`;
+- Functions и другие файлы, расположенные внутри Supabase Docker root;
+- владельцы файлов, ACL и xattrs через GNU `tar`.
+
+### Fail-closed правила Supabase
+
+- source stack **должен быть заранее остановлен вручную**; приложение само его не останавливает и не удаляет;
+- target Supabase root должен отсутствовать или быть пустым;
+- на target не должно быть существующих контейнеров `supabase-*`;
+- требуются `docker compose`, GNU `tar`, `sha256sum` и passwordless `sudo -n` для migration-пользователя;
+- принимается только локальный `STORAGE_BACKEND=file`; внешний S3/object storage пока блокируется;
+- до копирования проверяется свободное место;
+- после копирования можно выполнить агрегированный SHA-256 всех обычных файлов snapshot;
+- опционально после успешной checksum-проверки target запускается через `docker compose up -d --wait`;
+- DNS/Nginx/HAProxy cutover автоматически не выполняется.
+
+Cold snapshot выбран намеренно: обычный `pg_dump` недостаточен для полного клонирования self-hosted Supabase, потому что кроме пользовательских таблиц есть Auth, Storage metadata, системные роли/расширения, локальные Storage-объекты и конфигурация сервисов. Физический snapshot разрешён только при остановленном source stack, чтобы Postgres data и Storage оставались согласованными.
 
 ## Модель безопасности
 
@@ -51,6 +77,8 @@ sudo -n -u postgres createdb ...
 sudo -n mysql ...
 sudo -n mysqldump ...
 ```
+
+Для Supabase cold migration нужны Docker Engine + Docker Compose и разрешённые `sudo -n` операции для чтения snapshot, запуска Docker и записи target-каталога. Секреты `.env` не выводятся в журнал приложения.
 
 Для production лучше оформить узкий `sudoers` policy для migration-пользователя, а не выдавать полный root-доступ.
 
@@ -84,14 +112,15 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 
 Локально проект можно открыть в актуальной Android Studio с JDK 17+. Стандартный Gradle wrapper должен быть сгенерирован Gradle 9.6.0 перед тем, как считать локальную CLI-сборку полностью воспроизводимой.
 
-## Ограничения 0.1.0
+## Ограничения
 
 - В UI пока только password SSH authentication; ключи из Android Keystore — следующий security-контур.
 - Телефон сейчас является сетевым relay. На Android 15+ `dataSync` foreground services имеют системный суточный лимит длительности, поэтому многотерабайтные миграции лучше переводить на direct server-to-server transport, где телефон только управляет заданием.
 - Нет произвольного byte-resume после гибели процесса; безопасный повтор предполагает новый/пустой target.
-- Не копируются автоматически системные пользователи, Docker/Podman volumes, systemd units, firewall, cron, secrets и внешние object-storage ресурсы.
+- Обычный режим 0.1.0 не копирует автоматически системных пользователей, Docker/Podman volumes, systemd units, firewall, cron, secrets и внешние object-storage ресурсы.
+- Supabase 0.2 переносит только self-hosted Docker deployment с локальным file Storage. Supabase Cloud, внешний S3/R2/MinIO и Kubernetes/Helm пока не входят в этот контур.
 - Не выполняется DNS cutover и переключение Nginx/HAProxy автоматически.
-- Симлинки переносятся через `tar`, но checksum-контур 0.1.0 сравнивает обычные файлы.
-- Файловый режим предполагает GNU/Linux userland для используемых CLI-параметров.
+- Симлинки переносятся через `tar`, но checksum-контур сравнивает обычные файлы.
+- Файловый и Supabase-режимы предполагают GNU/Linux userland для используемых CLI-параметров.
 
 Перед production cutover обязательна отдельная прикладная проверка сайта/приложения на новом сервере и только затем ручное переключение трафика.
