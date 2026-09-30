@@ -71,10 +71,14 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 - Android Gradle Plugin 9.4.0
 - Gradle 9.6.0
 - JDK 17+
-- `compileSdk = 36`
+- `compileSdk = 37`
 - `targetSdk = 36`
 - `minSdk = 26`
+- Android SDK Platform package `platforms;android-37.0`
+- Android Build Tools `37.0.0`
 - Jetpack Compose
+
+`compileSdk` 37 нужен современным Compose/Core/Lifecycle зависимостям, а `targetSdk` пока остаётся 36, чтобы не включать новые Android 17 runtime-behavior без отдельной acceptance-проверки.
 
 В репозитории предусмотрен `.github/workflows/android-ci.yml`, который поднимает JDK/Android SDK/Gradle независимо от локальной машины, выполняет unit tests, Android Lint и `assembleDebug`, затем сохраняет APK как Actions artifact.
 

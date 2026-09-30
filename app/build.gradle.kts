@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "ru.servermove.app"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "ru.servermove.app"
